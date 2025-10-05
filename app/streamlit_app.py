@@ -1,0 +1,97 @@
+# app/streamlit_app.py
+
+import streamlit as st
+import pandas as pd
+import joblib
+
+# === Load model and preprocessing ===
+model = joblib.load("../models/trained_model.pkl")
+scaler = joblib.load("../models/scaler.pkl")
+le = joblib.load("../models/label_encoder.pkl")
+FEATURES = joblib.load("../models/feature_list.pkl")
+
+st.set_page_config(page_title="🪐 Kepler Exoplanet Classifier", layout="wide")
+
+st.title("🪐 Kepler Exoplanet Classifier")
+st.markdown("""
+This tool classifies potential **exoplanet detections** as:
+- 🟢 **CONFIRMED** — Definitely a planet  
+- 🟡 **CANDIDATE** — Likely a planet, not yet confirmed  
+- 🔴 **FALSE POSITIVE** — Probably not a planet due to various reasons
+""")
+
+# === Option 1: Upload CSV ===
+st.header("📂 Upload Data File")
+uploaded_file = st.file_uploader("Upload a CSV file with Kepler features", type=["csv"])
+
+if uploaded_file:
+    new_data = pd.read_csv(uploaded_file)
+    st.write("✅ Uploaded Data Preview:", new_data.head())
+
+    # Select numeric columns (as used during training)
+    new_data_num = new_data.select_dtypes(include=["float64", "int64"])
+    new_data_scaled = scaler.transform(new_data_num)
+
+    # Predict
+    predictions = model.predict(new_data_scaled)
+    predicted_labels = le.inverse_transform(predictions)
+
+    st.subheader("🧮 Predictions")
+    new_data["Predicted Class"] = predicted_labels
+    st.dataframe(new_data[["Predicted Class"] + list(new_data.columns)])
+
+    # Downloadable results
+    csv = new_data.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ Download Predictions", csv, "exoplanet_predictions.csv", "text/csv")
+
+# === Manual Input ===
+st.header("Inputs From Scientists")
+# Header
+#col= st.columns([1, 3])
+with st.form("manual_input_form"):
+    st.subheader("🔭 Observational Features")
+
+    orbital_period = st.number_input("Orbital Period (0.5-500 days)", min_value=0.0, value=45.3)
+    transit_depth = st.number_input("Transit Depth (50-20000 ppm)", min_value=0.0, value=1200.0)
+    planetary_radius = st.number_input("Planetary Radius (0.3-20 Earth radii)", min_value=0.0, value=1.2)
+    equilibrium_temp = st.number_input("Equilibrium Temperature (100-3000 K)", min_value=0.0, value=580.0)
+    stellar_temp = st.number_input("Stellar Effective Temperature (3000-10000 K)", min_value=0.0, value=5500.0)
+    stellar_radius = st.number_input("Stellar Radius (0.1-10 solar radii)", min_value=0.0, value=0.9)
+    stellar_logg = st.number_input("Stellar Surface Gravity (3.5-5 log10(cm/s²))", min_value=0.0, value=4.4)
+    kepler_mag = st.number_input("Kepler-band Magnitude (8-16)", min_value=0.0, value=13.2)
+
+    st.markdown("---")
+
+    with st.expander("⚙️ Advanced Mode (System Flags)"):
+        disposition_score = st.slider("Disposition Score (0–1)", 0.0, 1.0, 0.5)
+        ntl_fpflag = st.selectbox("Not Transit-Like Flag", [0, 1], index=0)
+        se_fpflag = st.selectbox("Stellar Eclipse Flag", [0, 1], index=0)
+        co_fpflag = st.selectbox("Centroid Offset Flag", [0, 1], index=0)
+        ec_fpflag = st.selectbox("Ephemeris Contamination Flag", [0, 1], index=0)
+
+    submitted = st.form_submit_button("Classify")
+
+if submitted:
+    input_data = pd.DataFrame([[
+        orbital_period, transit_depth, planetary_radius, equilibrium_temp,
+        stellar_temp, stellar_radius, stellar_logg, kepler_mag,
+        disposition_score, ntl_fpflag, se_fpflag, co_fpflag, ec_fpflag
+    ]], columns=FEATURES)
+
+    # Scale and predict
+    input_scaled = scaler.transform(input_data)
+    pred = model.predict(input_scaled)
+    label = le.inverse_transform(pred)[0]
+
+    st.success(f"🌟 Predicted Class: **{label}**")
+
+st.write("For detailed information about each feature, please check this link:")
+
+st.markdown(
+    """
+    <a href="https://exoplanetarchive.ipac.caltech.edu/docs/API_kepcandidate_columns.html#pdisposition" target="_blank">
+        <button style="padding:10px; font-size:16px;">Open Exoplanet Archive</button>
+    </a>
+    """,
+    unsafe_allow_html=True
+)
