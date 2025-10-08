@@ -1,7 +1,6 @@
 # src/train_model.py
-
 """
-Train a Decision Tree model on the Kepler exoplanet dataset and save it for later use.
+Train the first version (v1) of the Kepler Exoplanet Classifier.
 """
 
 import pandas as pd
@@ -13,23 +12,23 @@ import joblib
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
+import json
 
 # ================================
-# 1️⃣ LOAD THE DATA
+# 1️⃣ LOAD DATA
 # ================================
-DATA_PATH = "../data/kepler_data.csv"   # change to your CSV name if needed
+DATA_PATH = "../data/kepler_data.csv"
 df = pd.read_csv(DATA_PATH)
 
 print("✅ Data loaded successfully!")
 print("Shape:", df.shape)
-print("Columns:", df.columns.tolist())
 
 # ================================
 # 2️⃣ SET TARGET AND FEATURES
 # ================================
-target_col = "exoplanet_archive_disposition"   # confirm this is the exact column name
+target_col = "exoplanet_archive_disposition"
 FEATURES = [
-    'disposition_score', 'ntl_fpflag', 
+    'disposition_score', 'ntl_fpflag',
     'se_fpflag', 'co_fpflag', 'ec_fpflag',
     'koi_period', 'koi_depth',
     'koi_prad', 'koi_eqtemp',
@@ -47,29 +46,21 @@ le = LabelEncoder()
 y_encoded = le.fit_transform(y)
 
 # ================================
-# 4️⃣ HANDLE NUMERIC FEATURES ONLY
+# 4️⃣ CLEAN + SCALE FEATURES
 # ================================
-# drop non-numeric columns like names, flags, text fields
-X = X.select_dtypes(include=["float64", "int64"])
-
-# fill missing numeric values with median (keeps all rows!)
-X = X.fillna(X.median())
-
-# ================================
-# 5️⃣ SCALE FEATURES
-# ================================
+X = X.select_dtypes(include=["float64", "int64"]).fillna(X.median())
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
 # ================================
-# 6️⃣ TRAIN-TEST SPLIT
+# 5️⃣ SPLIT DATA
 # ================================
 X_train, X_test, y_train, y_test = train_test_split(
     X_scaled, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
 )
 
 # ================================
-# 7️⃣ TRAIN MODEL
+# 6️⃣ TRAIN MODEL
 # ================================
 model = DecisionTreeClassifier(
     criterion="gini",
@@ -80,7 +71,7 @@ model = DecisionTreeClassifier(
 model.fit(X_train, y_train)
 
 # ================================
-# 8️⃣ EVALUATE MODEL
+# 7️⃣ EVALUATE MODEL
 # ================================
 y_pred = model.predict(X_test)
 acc = accuracy_score(y_test, y_pred)
@@ -96,7 +87,7 @@ plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.title("Confusion Matrix - Decision Tree Classifier")
 plt.tight_layout()
-plt.savefig("../models/confusion_matrix2.png")
+plt.savefig("../models/confusion_matrix_v1.png")
 plt.close()
 
 # Feature Importance Plot
@@ -107,26 +98,29 @@ plt.title("Top 15 Most Important Features")
 plt.xlabel("Feature Importance Score")
 plt.ylabel("Feature")
 plt.tight_layout()
-plt.savefig("../models/feature_importances2.png")
+plt.savefig("../models/feature_importances_v1.png")
 plt.close()
 
-print("\n📊 Saved evaluation plots to '../models/' folder.")
-
 # ================================
-# 9️⃣ SAVE MODEL + SCALER + LABEL ENCODER
+# 8️⃣ SAVE MODEL + METADATA
 # ================================
 os.makedirs("../models", exist_ok=True)
-joblib.dump(model, "../models/trained_model.pkl")
-joblib.dump(scaler, "../models/scaler.pkl")
-joblib.dump(le, "../models/label_encoder.pkl")
+joblib.dump(model, "../models/trained_model_v1.pkl")
+joblib.dump(scaler, "../models/scaler_v1.pkl")
+joblib.dump(le, "../models/label_encoder_v1.pkl")
 joblib.dump(FEATURES, "../models/feature_list.pkl")
 
+metadata = {
+    "current_version": 1,
+    "versions": {
+        "1": {
+            "accuracy": float(acc),
+            "date": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+    }
+}
+with open("../models/model_metadata.json", "w") as f:
+    json.dump(metadata, f, indent=4)
 
-print("\n💾 Model, scaler, and label encoder saved successfully!")
+print("\n💾 Model v1 saved successfully!")
 print("📁 Files saved in '../models/' folder:")
-print(" - trained_model.pkl")
-print(" - scaler.pkl")
-print(" - label_encoder.pkl")
-print(" - feature_list.pkl")
-print(" - confusion_matrix.png")
-print(" - feature_importances.png")

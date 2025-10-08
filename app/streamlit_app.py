@@ -3,105 +3,237 @@
 import streamlit as st
 import pandas as pd
 import joblib
-from PIL import Image
+import json
 import os
+from datetime import datetime
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import accuracy_score, classification_report
+import matplotlib.pyplot as plt
+import seaborn as sns
+from PIL import Image
 
-# === Load model and preprocessing ===
-model = joblib.load("../models/trained_model.pkl")
-scaler = joblib.load("../models/scaler.pkl")
-le = joblib.load("../models/label_encoder.pkl")
+# ===============================
+# Load model metadata
+# ===============================
+metadata_path = "../models/model_metadata.json"
+os.makedirs("../models", exist_ok=True)
+
+if not os.path.exists(metadata_path):
+    metadata = {"current_version": 1, "versions": {}}
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=4)
+else:
+    with open(metadata_path, "r") as f:
+        metadata = json.load(f)
+
+v = metadata.get("current_version", 1)
+
+# ===============================
+# Load current model + tools
+# ===============================
+model = joblib.load(f"../models/trained_model_v{v}.pkl")
+scaler = joblib.load(f"../models/scaler_v{v}.pkl")
+le = joblib.load(f"../models/label_encoder_v{v}.pkl")
 FEATURES = joblib.load("../models/feature_list.pkl")
 
+# ===============================
+# Streamlit UI setup
+# ===============================
 st.set_page_config(page_title="🪐 Kepler Exoplanet Classifier", layout="wide")
-
 st.title("🪐 Kepler Exoplanet Classifier")
-st.markdown("""
-This tool classifies potential **exoplanet detections** as:
-- 🟢 **CONFIRMED EXOPLANET** — Definitely a planet  
-- 🟡 **PLANETARY CANDIDATE** — Likely a planet, not yet confirmed  
-- 🔴 **FALSE POSITIVE** — Probably not a planet due to various reasons
+
+st.markdown(f"""
+### Current Model Version: **v{v}**
+This AI model classifies potential **exoplanet detections** as:
+- 🟢 **CONFIRMED EXOPLANET** — Definitely a planet 
+- 🟡 **PLANETARY CANDIDATE** — Likely a planet, not yet confirmed 
+- 🔴 **FALSE POSITIVE** — Probably not a planet due to various
 """)
 
-st.subheader("🌟 Top Features Deciding Planet's Presence")
-
-feature_plot_path = "../models/feature_importances2.png"
+# ===============================
+# Feature Importance
+# ===============================
+st.subheader("🌟 Top Features Influencing Planet Detection")
+feature_plot_path = f"../models/feature_importances_v{v}.png"
 
 if os.path.exists(feature_plot_path):
-    image = Image.open(feature_plot_path)
-    st.image(image, caption="Feature Importance (Top 15)", width=800)
+    st.image(feature_plot_path, caption=f"Feature Importance (Model v{v})", width=800)
 else:
-    st.warning("⚠️ Feature importance plot not found. Please train the model first.")
+    st.warning("⚠️ Feature importance plot not found. Please train or retrain the model first.")
 
-# === Option 1: Upload CSV ===
-st.header("📂 Upload Data File")
+# ===============================
+# 📂 Option 1: Upload file for prediction
+# ===============================
+st.header("📂 Predict Using Uploaded Data")
 uploaded_file = st.file_uploader("Upload a CSV file with Kepler features", type=["csv"])
 
 if uploaded_file:
     new_data = pd.read_csv(uploaded_file)
     st.write("✅ Uploaded Data Preview:", new_data.head())
 
-    # Select numeric columns (as used during training)
-    new_data_num = new_data.select_dtypes(include=["float64", "int64"])
-    new_data_scaled = scaler.transform(new_data_num)
+    try:
+        new_data = new_data[FEATURES]
+        new_data = new_data.fillna(new_data.median())
+        new_data_scaled = scaler.transform(new_data)
+        predictions = model.predict(new_data_scaled)
+        predicted_labels = le.inverse_transform(predictions)
 
-    # Predict
-    predictions = model.predict(new_data_scaled)
-    predicted_labels = le.inverse_transform(predictions)
+        new_data["Predicted Class"] = predicted_labels
+        st.subheader("🧮 Predictions")
+        st.dataframe(new_data.head())
 
-    st.subheader("🧮 Predictions")
-    new_data["Predicted Class"] = predicted_labels
-    st.dataframe(new_data[["Predicted Class"] + list(new_data.columns)])
+        csv = new_data.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Download Predictions", csv, "exoplanet_predictions.csv", "text/csv")
+    except Exception as e:
+        st.error(f"❌ Error during prediction: {e}")
 
-    # Downloadable results
-    csv = new_data.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Download Predictions", csv, "exoplanet_predictions.csv", "text/csv")
+# ===============================
+# 🔭 Option 2: Manual Input
+# ===============================
+st.header("🔭 Predict Using Manual Input")
 
-# === Manual Input ===
-st.header("Inputs From Scientists")
-# Header
-#col= st.columns([1, 3])
 with st.form("manual_input_form"):
-    st.subheader("🔭 Observational Features")
+    st.subheader("Observational Parameters")
 
-    orbital_period = st.number_input("Orbital Period (0.5-500 days)", min_value=0.0, value=45.3)
-    transit_depth = st.number_input("Transit Depth (50-20000 ppm)", min_value=0.0, value=1200.0)
-    planetary_radius = st.number_input("Planetary Radius (0.3-20 Earth radii)", min_value=0.0, value=1.2)
-    equilibrium_temp = st.number_input("Equilibrium Temperature (100-3000 K)", min_value=0.0, value=580.0)
-    stellar_temp = st.number_input("Stellar Effective Temperature (3000-10000 K)", min_value=0.0, value=5500.0)
-    stellar_radius = st.number_input("Stellar Radius (0.1-10 solar radii)", min_value=0.0, value=0.9)
-    stellar_logg = st.number_input("Stellar Surface Gravity (3.5-5 log10(cm/s²))", min_value=0.0, value=4.4)
-    kepler_mag = st.number_input("Kepler-band Magnitude (8-16)", min_value=0.0, value=13.2)
+    col1, col2 = st.columns(2)
+    with col1:
+        koi_period = st.number_input("Orbital Period (days)", 0.0, 500.0, 45.3)
+        koi_depth = st.number_input("Transit Depth (ppm)", 0.0, 20000.0, 1200.0)
+        koi_prad = st.number_input("Planetary Radius (Earth radii)", 0.0, 20.0, 1.2)
+        koi_eqtemp = st.number_input("Equilibrium Temperature (K)", 0.0, 3000.0, 580.0)
+    with col2:
+        koi_stefftemp = st.number_input("Stellar Temperature (K)", 3000.0, 10000.0, 5500.0)
+        koi_srad = st.number_input("Stellar Radius (solar radii)", 0.0, 10.0, 0.9)
+        koi_slogg = st.number_input("Stellar Surface Gravity (log10(cm/s²))", 0.0, 6.0, 4.4)
+        koi_kepmag = st.number_input("Kepler-band Magnitude", 0.0, 20.0, 13.2)
 
     st.markdown("---")
 
     st.warning("""
-        ⚠️ **Note:** Features like `disposition_score`, `Centroid Offset Flag`, `Stellar Eclipse Flag`, `Not Transit-Like Flag`, and `Ephemeris Match Indicates Contamination Flag` are **system-generated by NASA’s pipeline**.
-            
-            Best left unchanged unless you're a space scientist validating data. They are listed under "Advanced Mode" below.
-        """)
+     **Note:** Features like `disposition_score`, `Centroid Offset Flag`, `Stellar Eclipse Flag`, `Not Transit-Like Flag`, and `Ephemeris Match Indicates Contamination Flag` are **system-generated by NASA’s pipeline**.
+    Best left unchanged unless you're a space scientist validating data. They are listed under "Advanced Mode" below.
+    """)
 
-    with st.expander("⚙️ Advanced Mode (System Flags)"):
+    with st.expander("⚙️ Advanced (System Features)"):
         disposition_score = st.slider("Disposition Score (0–1)", 0.0, 1.0, 0.5)
         ntl_fpflag = st.selectbox("Not Transit-Like Flag", [0, 1], index=0)
         se_fpflag = st.selectbox("Stellar Eclipse Flag", [0, 1], index=0)
         co_fpflag = st.selectbox("Centroid Offset Flag", [0, 1], index=0)
         ec_fpflag = st.selectbox("Ephemeris Contamination Flag", [0, 1], index=0)
 
-    submitted = st.form_submit_button("Classify")
+    submitted = st.form_submit_button("🚀 Classify Object")
 
 if submitted:
-    input_data = pd.DataFrame([[
-        orbital_period, transit_depth, planetary_radius, equilibrium_temp,
-        stellar_temp, stellar_radius, stellar_logg, kepler_mag,
-        disposition_score, ntl_fpflag, se_fpflag, co_fpflag, ec_fpflag
-    ]], columns=FEATURES)
+    try:
+        input_data = pd.DataFrame([[
+            disposition_score, ntl_fpflag, se_fpflag, co_fpflag, ec_fpflag,
+            koi_period, koi_depth, koi_prad, koi_eqtemp,
+            koi_stefftemp, koi_srad, koi_slogg, koi_kepmag
+        ]], columns=FEATURES)
 
-    # Scale and predict
-    input_scaled = scaler.transform(input_data)
-    pred = model.predict(input_scaled)
-    label = le.inverse_transform(pred)[0]
+        input_scaled = scaler.transform(input_data)
+        pred = model.predict(input_scaled)
+        label = le.inverse_transform(pred)[0]
 
-    st.success(f"🌟 Predicted Class: **{label}**")
+        color_map = {
+            "CONFIRMED": "🟢",
+            "CANDIDATE": "🟡",
+            "FALSE POSITIVE": "🔴"
+        }
+        st.success(f"{color_map.get(label.upper(), '✨')} Predicted Class: **{label}**")
+    except Exception as e:
+        st.error(f"❌ Error in classification: {e}")
+
+# ===============================
+# 🧠 Retrain and Version Model
+# ===============================
+st.header("🧠 Retrain and Version Your Model")
+
+uploaded_new_data = st.file_uploader(
+    "📁 Upload new dataset to retrain the model (CSV or Excel)", type=["csv", "xlsx"]
+)
+
+if uploaded_new_data:
+    if uploaded_new_data.name.endswith(".csv"):
+        df_new = pd.read_csv(uploaded_new_data)
+    else:
+        df_new = pd.read_excel(uploaded_new_data)
+
+    st.write("✅ Uploaded New Dataset Preview:")
+    st.dataframe(df_new.head())
+
+    target_col = "exoplanet_archive_disposition"
+
+    if target_col not in df_new.columns:
+        st.error(f"❌ Target column '{target_col}' not found!")
+    else:
+        if st.button("🚀 Retrain Model"):
+            with st.spinner("Training new model... please wait ⏳"):
+                X = df_new.drop(columns=[target_col])
+                y = df_new[target_col]
+
+                X = X.select_dtypes(include=["float64", "int64"]).fillna(X.median())
+                le_new = LabelEncoder()
+                y_encoded = le_new.fit_transform(y)
+                scaler_new = StandardScaler()
+                X_scaled = scaler_new.fit_transform(X)
+
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X_scaled, y_encoded, test_size=0.2, random_state=42
+                )
+
+                model_new = DecisionTreeClassifier(
+                    criterion="gini",
+                    max_depth=10,
+                    min_samples_split=5,
+                    random_state=42
+                )
+                model_new.fit(X_train, y_train)
+                y_pred = model_new.predict(X_test)
+
+                acc_new = accuracy_score(y_test, y_pred)
+                st.success(f"✅ New Model Accuracy: **{acc_new:.4f}**")
+
+                current_version = metadata["current_version"]
+                prev_acc = metadata["versions"].get(str(current_version), {}).get("accuracy")
+
+                if prev_acc:
+                    st.info(f"📊 Current Model (v{current_version}) Accuracy: {prev_acc:.4f}")
+                    if acc_new > prev_acc:
+                        st.success("🚀 The new model performs better!")
+                    else:
+                        st.warning("⚠️ The new model performs worse than the current version.")
+
+                report_df = pd.DataFrame(classification_report(y_test, y_pred, output_dict=True)).transpose()
+                st.subheader("📈 Evaluation Metrics")
+                st.dataframe(report_df)
+
+                importances = pd.Series(model_new.feature_importances_, index=X.columns).sort_values(ascending=False)
+                plt.figure(figsize=(7, 4))
+                sns.barplot(x=importances.head(10), y=importances.head(10).index)
+                plt.title("Top 10 Feature Importances (New Model)")
+                plt.tight_layout()
+                plt.savefig("../models/feature_importances_new.png")
+                st.image("../models/feature_importances_new.png", width=450)
+
+                if st.button("💾 Upgrade to New Model Version"):
+                    new_version = current_version + 1
+                    joblib.dump(model_new, f"../models/trained_model_v{new_version}.pkl")
+                    joblib.dump(scaler_new, f"../models/scaler_v{new_version}.pkl")
+                    joblib.dump(le_new, f"../models/label_encoder_v{new_version}.pkl")
+
+                    metadata["current_version"] = new_version
+                    metadata["versions"][str(new_version)] = {
+                        "accuracy": float(acc_new),
+                        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+
+                    with open(metadata_path, "w") as f:
+                        json.dump(metadata, f, indent=4)
+
+                    st.success(f"🎉 Model upgraded to version {new_version} successfully!")
 
 st.write("For detailed information about each feature, please check this link:")
 
@@ -113,3 +245,5 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+
